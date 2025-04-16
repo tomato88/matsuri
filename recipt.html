@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>市の祭りカレンダー</title>
+  <style>
+    body { font-family: sans-serif; background: #f7f7f7; padding: 20px; }
+    h1 { color: #333; }
+    #calendar { margin-top: 20px; border-collapse: collapse; width: 100%; }
+    #calendar th, #calendar td { border: 1px solid #ccc; padding: 10px; text-align: left; }
+    #festival-list { margin-top: 20px; }
+    .festival-day { background-color: #fffbcc; }
+    .loading { font-size: 1.2em; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>市の祭りカレンダー</h1>
+  <form id="cityForm">
+    <label for="cityInput">市の名前を入力してください：</label>
+    <input type="text" id="cityInput" required>
+    <button type="submit">検索</button>
+  </form>
+
+  <div id="festival-list"></div>
+  <table id="calendar"></table>
+
+  <script>
+    // 複数のAPIを並列で呼び出し
+    async function fetchFestivalData(city) {
+      const apiKey = 'YOUR_GOOGLE_API_KEY'; // ここに自分のAPIキーを入力
+      const googleApiUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${city}+festival&key=${apiKey}`;
+      const festivalApiUrl = `https://example.com/api/festivals?city=${city}&key=${apiKey}`; // 例：観光協会APIのURL
+
+      // 複数のAPIを並列で呼び出し
+      const responses = await Promise.all([
+        fetch(googleApiUrl),
+        fetch(festivalApiUrl)
+      ]);
+
+      try {
+        const googleResponse = await responses[0].json();
+        const festivalResponse = await responses[1].json();
+
+        // Google Places APIからのイベント情報
+        const googleFestivals = googleResponse.results.map(item => ({
+          name: item.name,
+          date: item.opening_hours ? item.opening_hours.periods[0].open : "不明"
+        }));
+
+        // 観光協会APIなどからのイベント情報
+        const festivalList = festivalResponse.festivals.map(item => ({
+          name: item.name,
+          date: item.date
+        }));
+
+        // 両方の情報を統合
+        const allFestivals = [...googleFestivals, ...festivalList];
+        return allFestivals;
+      } catch (error) {
+        console.error("データ取得に失敗しました。", error);
+        return [];
+      }
+    }
+
+    // カレンダー形式で表示
+    function generateCalendar(festivals) {
+      const calendar = document.getElementById("calendar");
+      calendar.innerHTML = "";
+      const header = "<tr><th>日付</th><th>祭り名</th></tr>";
+      calendar.insertAdjacentHTML("beforeend", header);
+
+      festivals.sort((a, b) => a.date.localeCompare(b.date)).forEach(festival => {
+        const row = `<tr class="festival-day"><td>${festival.date}</td><td>${festival.name}</td></tr>`;
+        calendar.insertAdjacentHTML("beforeend", row);
+      });
+    }
+
+    // フォーム送信時の処理
+    document.getElementById("cityForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      const city = document.getElementById("cityInput").value.trim();
+      const listDiv = document.getElementById("festival-list");
+
+      if (city) {
+        // ロード中表示
+        listDiv.innerHTML = '<p class="loading">ロード中...</p>';
+        document.getElementById("calendar").innerHTML = ""; // 以前のカレンダー情報をクリア
+
+        const festivals = await fetchFestivalData(city);
+        
+        // ロード中表示を消す
+        if (festivals.length > 0) {
+          listDiv.innerHTML = `<h2>${city}の祭り一覧</h2>`;
+          generateCalendar(festivals);
+        } else {
+          listDiv.innerHTML = `<p>${city}の祭り情報は見つかりませんでした。</p>`;
+          document.getElementById("calendar").innerHTML = "";
+        }
+      }
+    });
+  </script>
+</body>
+</html>
