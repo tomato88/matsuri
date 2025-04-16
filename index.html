@@ -1,0 +1,140 @@
+from flask import Flask, request, jsonify
+import requests
+from bs4 import BeautifulSoup
+import re
+
+app = Flask(__name__)
+
+# スクレイピング関数（Walkerplus）
+def scrape_walkerplus(city):
+    url = f"https://www.walkerplus.com/event_list/{city}/"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    events = []
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for item in soup.select(".eventListItem"):
+            title_tag = item.select_one(".eventTitle")
+            date_tag = item.select_one(".eventDate")
+            link_tag = item.select_one("a")
+            if title_tag and date_tag and link_tag:
+                events.append({
+                    "title": title_tag.text.strip(),
+                    "date": date_tag.text.strip(),
+                    "link": "https://www.walkerplus.com" + link_tag["href"]
+                })
+    except Exception as e:
+        print("Walkerplus Error:", e)
+    return events
+
+# スクレイピング関数（じゃらん）
+def scrape_jalan(city):
+    url = f"https://www.jalan.net/event/evtSearch.do?areaCd=3&keyword={city}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    events = []
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for li in soup.select(".mB20 > ul > li"):
+            title_tag = li.select_one("a")
+            date_tag = li.find(string=re.compile("開催期間"))
+            if title_tag and date_tag:
+                events.append({
+                    "title": title_tag.text.strip(),
+                    "date": date_tag.strip(),
+                    "link": "https://www.jalan.net" + title_tag["href"]
+                })
+    except Exception as e:
+        print("Jalan Error:", e)
+    return events
+
+@app.route("/", methods=["GET"])
+def index():
+    return """
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>市の祭り検索</title>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #calendar { margin-top: 20px; border-collapse: collapse; width: 100%; }
+    #calendar th, #calendar td { border: 1px solid #ccc; padding: 10px; text-align: left; }
+    .highlight { background-color: #fffbe6; }
+    .loading { color: #888; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>市の祭り検索</h1>
+  <form onsubmit="searchFestival(event)">
+    <input type="text" id="cityInput" placeholder="例: tokyo, osaka" required>
+    <button type="submit">検索</button>
+  </form>
+  <div id="loading" class="loading" style="display: none;">検索中...</div>
+  <div id="results"></div>
+  <table id="calendar"></table>
+
+  <script>
+    async function searchFestival(e) {
+      e.preventDefault();
+      const city = document.getElementById("cityInput").value;
+      const loading = document.getElementById("loading");
+      const resultsDiv = document.getElementById("results");
+      const calendar = document.getElementById("calendar");
+      loading.style.display = "block";
+      resultsDiv.innerHTML = "";
+      calendar.innerHTML = "";
+
+      const formData = new FormData();
+      formData.append("city", city);
+
+      const res = await fetch("/search", {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      loading.style.display = "none";
+
+      if (data.length === 0) {
+        resultsDiv.innerHTML = "<p>該当する祭りは見つかりませんでした。</p>";
+        return;
+      }
+
+      resultsDiv.innerHTML = "<h2>検索結果</h2><ul>" + data.map(f =>
+        `<li><a href="${f.link}" target="_blank">${f.title}</a> (${f.date})</li>`
+      ).join("") + "</ul>";
+
+      const eventsByDate = {};
+      data.forEach(f => {
+        const match = f.date.match(/\\d{4}年?\\d{1,2}月?\\d{1,2}日?/);
+        if (match) {
+          const dateStr = match[0].replace(/[年月]/g, "-").replace("日", "");
+          eventsByDate[dateStr] = eventsByDate[dateStr] || [];
+          eventsByDate[dateStr].push(f.title);
+        }
+      });
+
+      const today = dayjs();
+      let html = "<tr><th>日付</th><th>イベント</th></tr>";
+      for (let i = 0; i < 30; i++) {
+        const d = today.add(i, "day").format("YYYY-MM-DD");
+        const events = eventsByDate[d] || [];
+        html += `<tr${events.length ? ' class="highlight"' : ''}><td>${d}</td><td>${events.join("<br>")}</td></tr>`;
+      }
+      calendar.innerHTML = html;
+    }
+  </script>
+</body>
+</html>
+"""
+
+@app.route("/search", methods=["POST"])
+def search():
+    city = request.form.get("city")
+    walker = scrape_walkerplus(city)
+    jalan = scrape_jalan(city)
+    return jsonify(walker + jalan)
+
+if __name__ == "__main__":
+    app.run(debug=True)
